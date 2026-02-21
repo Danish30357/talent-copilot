@@ -202,14 +202,9 @@ def render_sidebar():
                         "message": data["message"],
                         "payload": {"filename": uploaded_file.name},
                     }
-                    st.success("Parsing confirmation required! See the chat area.")
                     st.rerun()
                 elif resp:
                     st.error(resp.json().get("detail", "Upload error"))
-
-        # ── CV Save Confirmation (Step 2, shown after parse completes) ──
-        if st.session_state.parse_job_completed:
-            _render_parse_complete_save_prompt()
 
         st.divider()
 
@@ -233,13 +228,13 @@ def render_sidebar():
             st.rerun()
 
 
-def _render_parse_complete_save_prompt():
+@st.dialog("📄 CV Parsing Complete")
+def show_parse_complete_save_prompt():
     """Show save confirmation prompt after CV parse job completes."""
     parse_result = st.session_state.parse_job_completed
-    st.markdown("---")
     st.success(f"✅ CV parsed: **{parse_result.get('full_name', 'Unknown')}**")
-    st.markdown(f"Skills: {', '.join(parse_result.get('skills', [])[:5])}")
-    st.markdown(f"Experience entries: {len(parse_result.get('experience', []))}")
+    st.markdown(f"**Skills:** {', '.join(parse_result.get('skills', [])[:5])}")
+    st.markdown(f"**Experience entries:** {len(parse_result.get('experience', []))}")
 
     if st.button("💾 Request Save to Workspace", use_container_width=True):
         if not st.session_state.current_session_id:
@@ -261,7 +256,6 @@ def _render_parse_complete_save_prompt():
                     "payload": data.get("candidate_preview", {}),
                 }
                 st.session_state.parse_job_completed = None
-                st.success("Save confirmation required! See the chat area.")
                 st.rerun()
             elif resp:
                 st.error(resp.json().get("detail", "Error"))
@@ -294,31 +288,29 @@ def _render_job_status(job_id: str) -> bool:
 
 
 # ── Confirmation Modal ──────────────────────────────────────
-def render_confirmation_modal():
-    """Shows the HITL yes/no prompt in the main chat area."""
+@st.dialog("⚠️ Action Confirmation")
+def show_confirmation_modal():
+    """Shows the HITL yes/no prompt via a popup dialog."""
     conf = st.session_state.pending_confirmation
     if not conf:
         return
 
-    st.markdown("---")
-    with st.container():
-        st.warning(f"**⚠️ Confirmation Required: {conf['tool']}**")
-        st.info(conf.get("message", "Please confirm or deny this action."))
+    st.markdown(f"**Tool Execution:** `{conf['tool']}`")
+    st.info(conf.get("message", "Please confirm or deny this action."))
 
-        if conf.get("payload"):
+    if conf.get("payload"):
+        with st.expander("View Payload Details", expanded=True):
             st.json(conf["payload"])
 
-        col1, col2, _ = st.columns([1, 1, 2])
-        with col1:
-            if st.button("✅ Yes / Approve", type="primary", use_container_width=True,
-                          key="confirm_yes"):
-                _handle_confirmation_decision(conf["id"], approved=True)
-        with col2:
-            if st.button("❌ No / Deny", type="secondary", use_container_width=True,
-                          key="confirm_no"):
-                _handle_confirmation_decision(conf["id"], approved=False)
-
-    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("✅ Yes / Approve", type="primary", use_container_width=True,
+                      key="confirm_yes"):
+            _handle_confirmation_decision(conf["id"], approved=True)
+    with col2:
+        if st.button("❌ No / Deny", type="secondary", use_container_width=True,
+                      key="confirm_no"):
+            _handle_confirmation_decision(conf["id"], approved=False)
 
 
 def _handle_confirmation_decision(confirmation_id: str, approved: bool):
@@ -331,12 +323,14 @@ def _handle_confirmation_decision(confirmation_id: str, approved: bool):
         if approved:
             if data.get("job_id"):
                 st.session_state.active_jobs.append(data["job_id"])
-                st.success(f"✅ Approved! Job dispatched: `{data['job_id']}`")
+                st.success(f"✅ Approved! Background job dispatched: `{data['job_id']}`")
             else:
-                st.success("✅ Approved!")
+                st.success("✅ Approved! Operation executing...")
         else:
-            st.info("❌ Denied. No action taken.")
+            st.warning("❌ Denied. Operation aborted.")
+        
         st.session_state.pending_confirmation = None
+        time.sleep(1) # Let the user see the success message briefly before rerun
         st.rerun()
     elif resp:
         st.error(resp.json().get("detail", "Error processing confirmation"))
@@ -346,22 +340,20 @@ def _handle_confirmation_decision(confirmation_id: str, approved: bool):
 def render_chat():
     st.markdown("### 💬 Chat")
 
-    # Show HITL confirmation block if pending
-    render_confirmation_modal()
-
     # Message history
     for msg in st.session_state.messages:
         role = msg.get("role", "user")
-        with st.chat_message(role):
+        avatar = "🧑‍💻" if role == "user" else "🧠"
+        with st.chat_message(role, avatar=avatar):
             st.markdown(msg["content"])
 
     # Input
     if prompt := st.chat_input("Ask TalentCopilot..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar="🧑‍💻"):
             st.markdown(prompt)
 
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar="🧠"):
             with st.spinner("Thinking..."):
                 resp = api_post(
                     "/chat",
@@ -510,14 +502,35 @@ def main():
         """
         <style>
         .stApp { background-color: #0e1117; }
-        .stChatMessage { border-radius: 12px; padding: 0.5rem; }
-        [data-testid="stSidebar"] { background-color: #161b22; }
-        .stButton>button { border-radius: 8px; transition: all 0.2s ease; }
-        .stButton>button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(108, 99, 255, 0.3);
+        
+        /* Chat aesthetics */
+        [data-testid="stChatMessage"] { 
+            border-radius: 12px; 
+            padding: 1rem; 
+            margin-bottom: 0.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-        .stMetric { background: #1c2130; border-radius: 8px; padding: 0.5rem; }
+        /* User messages */
+        [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+            background-color: #1e2430;
+            border-left: 4px solid #6C63FF;
+        }
+        /* Assistant messages */
+        [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) {
+            background-color: #1c222b;
+            border-left: 4px solid #00C896;
+        }
+
+        [data-testid="stSidebar"] { background-color: #161b22; }
+        .stButton>button { border-radius: 8px; transition: all 0.2s ease; font-weight: 500;}
+        .stButton>button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(108, 99, 255, 0.2);
+        }
+        .stMetric { background: #1c2130; border-radius: 8px; padding: 1rem; border: 1px solid #2d3342;}
+        
+        /* Modals/Dialogs */
+        div[role="dialog"] { border-radius: 16px; border: 1px solid #3d4554; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -527,6 +540,12 @@ def main():
         render_login()
     else:
         render_sidebar()
+
+        # Render any active modal dialogs first
+        if st.session_state.pending_confirmation:
+            show_confirmation_modal()
+        elif st.session_state.parse_job_completed:
+            show_parse_complete_save_prompt()
 
         main_tab, workspace_tab = st.tabs(["💬 Chat", "🏢 Workspace"])
 
