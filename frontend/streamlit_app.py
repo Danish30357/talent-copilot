@@ -527,8 +527,33 @@ def main():
         }
         .stMetric { background: #1c2130; border-radius: 8px; padding: 1rem; border: 1px solid #2d3342;}
         
-        /* Modals/Dialogs */
-        div[role="dialog"] { border-radius: 16px; border: 1px solid #3d4554; }
+        /* Force full height so chat input pins to bottom */
+        .main .block-container {
+            height: calc(100vh - 80px);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            padding-bottom: 0 !important;
+        }
+        /* Make the chat message area scrollable */
+        [data-testid="stVerticalBlock"] {
+            flex: 1;
+            overflow-y: auto;
+        }
+        /* Lock chat input to the very bottom */
+        [data-testid="stChatInput"] {
+            position: fixed !important;
+            bottom: 0 !important;
+            width: calc(100% - 250px) !important;
+            background: #0e1117 !important;
+            padding: 0.75rem 1rem !important;
+            border-top: 1px solid #2d3342 !important;
+            z-index: 999;
+        }
+        /* Add bottom padding to messages so last one isn't hidden behind input */
+        [data-testid="stChatMessage"]:last-child {
+            margin-bottom: 80px;
+        }
         </style>
         """,
         unsafe_allow_html=True,
