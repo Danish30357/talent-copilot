@@ -211,11 +211,22 @@ def render_sidebar():
         st.markdown("#### ⚙️ Active Jobs")
         if st.session_state.active_jobs:
             still_active = []
+            job_just_completed = False
             for job_id in st.session_state.active_jobs:
                 completed = _render_job_status(job_id)
                 if not completed:
                     still_active.append(job_id)
+                else:
+                    job_just_completed = True
             st.session_state.active_jobs = still_active
+
+            # Auto-refresh: if jobs still running, poll every 3 seconds
+            if still_active:
+                time.sleep(3)
+                st.rerun()
+            # If a job just finished, rerun immediately to show the dialog
+            elif job_just_completed:
+                st.rerun()
         else:
             st.caption("No active jobs.")
 
