@@ -11,6 +11,7 @@ from passlib.context import CryptContext
 
 from app.config import get_settings
 from app.infrastructure.database.models import TenantModel, UserModel
+from sqlalchemy import select
 
 async def seed_data():
     settings = get_settings()
@@ -26,45 +27,62 @@ async def seed_data():
     email = "recruiter@acme.com"
 
     async with async_session() as session:
-        # Check if tenant exists
-        from sqlalchemy import select
+        # -- TENANT A --
+        tenant_name = "acme-corp"
+        email = "recruiter@acme.com"
+        
+        # Check if tenant A exists
+        # ... your code ...
         stmt = select(TenantModel).where(TenantModel.name == tenant_name)
         result = await session.execute(stmt)
-        tenant = result.scalar_one_or_none()
+        tenant_a = result.scalar_one_or_none()
         
-        if not tenant:
-            tenant = TenantModel(
-                id=str(uuid.uuid4()),
-                name=tenant_name
-            )
-            session.add(tenant)
+        if not tenant_a:
+            tenant_a = TenantModel(id=str(uuid.uuid4()), name=tenant_name)
+            session.add(tenant_a)
             await session.commit()
-            print(f"Created tenant: {tenant_name} ({tenant.id})")
-        else:
-            print(f"Tenant {tenant_name} already exists.")
+            print(f"Created tenant: {tenant_name}")
             
-        # Check if user exists
+        # Check if user A exists
         stmt = select(UserModel).where(UserModel.email == email)
         result = await session.execute(stmt)
-        user = result.scalar_one_or_none()
+        user_a = result.scalar_one_or_none()
         
-        if not user:
-            user = UserModel(
-                id=str(uuid.uuid4()),
-                tenant_id=tenant.id,
-                email=email,
-                hashed_password=hashed_password,
-                full_name="Acme Recruiter",
-                is_active=True
+        if not user_a:
+            user_a = UserModel(
+                id=str(uuid.uuid4()), tenant_id=tenant_a.id,
+                email=email, hashed_password=hashed_password,
+                full_name="Acme Recruiter", is_active=True
             )
-            session.add(user)
+            session.add(user_a)
             await session.commit()
-            print(f"Created user: {email} ({user.id})")
-        else:
-            user.hashed_password = hashed_password
-            session.add(user)
+            print(f"Created user: {email}")
+            
+        # -- TENANT B --
+        tenant_b_name = "other-corp"
+        email_b = "other@techcorp.com"
+        
+        stmt = select(TenantModel).where(TenantModel.name == tenant_b_name)
+        result = await session.execute(stmt)
+        tenant_b = result.scalar_one_or_none()
+        if not tenant_b:
+            tenant_b = TenantModel(id=str(uuid.uuid4()), name=tenant_b_name)
+            session.add(tenant_b)
             await session.commit()
-            print(f"User {email} already exists. Reset password.")
+            print(f"Created tenant: {tenant_b_name}")
+            
+        stmt = select(UserModel).where(UserModel.email == email_b)
+        result = await session.execute(stmt)
+        user_b = result.scalar_one_or_none()
+        if not user_b:
+            user_b = UserModel(
+                id=str(uuid.uuid4()), tenant_id=tenant_b.id,
+                email=email_b, hashed_password=hashed_password,
+                full_name="TechCorp User", is_active=True
+            )
+            session.add(user_b)
+            await session.commit()
+            print(f"Created user: {email_b}")
 
 if __name__ == "__main__":
     if sys.platform == "win32":

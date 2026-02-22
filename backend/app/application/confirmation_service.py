@@ -1,10 +1,5 @@
 """
 Confirmation service — cryptographically ties tool execution to user approval.
-
-Confirmation flow:
-1. Create confirmation with SHA-256 hash of (tenant_id, user_id, session_id, tool_name, tool_payload)
-2. User approves or denies
-3. On execution, recompute hash and verify it matches → prevents replay & tampering
 """
 
 from __future__ import annotations

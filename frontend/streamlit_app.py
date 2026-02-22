@@ -179,7 +179,6 @@ def render_sidebar():
 
         st.divider()
 
-        # ── CV Upload (Step 1: Parse) ───────────────────────
         st.markdown("#### 📄 CV Upload")
         uploaded_file = st.file_uploader("Upload CV (PDF/DOCX)", type=["pdf", "docx"])
         if uploaded_file and st.button("📤 Upload & Request Parse", use_container_width=True):
@@ -216,7 +215,6 @@ def render_sidebar():
                 completed = _render_job_status(job_id)
                 if not completed:
                     still_active.append(job_id)
-            # Atomically replace the list instead of mutating during iteration
             st.session_state.active_jobs = still_active
         else:
             st.caption("No active jobs.")

@@ -3,7 +3,6 @@ Workspace routes — candidates, repositories, CV upload, GitHub ingestion,
 combined workspace snapshot.
 """
 
-# (Removed __future__ import to fix FastAPI UploadFile evaluation)
 import os
 import uuid
 from pathlib import Path
@@ -190,12 +189,6 @@ async def upload_cv(
 ) -> dict:
     """
     Upload a CV/resume file and request HITL confirmation before parsing.
-
-    HITL Flow:
-      1. Upload file → creates cv_parsing confirmation (this endpoint)
-      2. User approves → parse job runs, returns structured data in job result
-      3. System asks: "Do you want me to save this profile?" → creates cv_save confirmation
-      4. User approves → save job persists Candidate to DB
     """
     # Validate file type
     try:
@@ -246,7 +239,6 @@ async def upload_cv(
 
 # ─────────────────────────────────────────────────────────────
 # CV Save Confirmation — HITL Step 2 (triggered programmatically
-# after parse job completes; frontend polls job then calls this)
 # ─────────────────────────────────────────────────────────────
 
 @router.post("/upload/cv/save-confirmation")
@@ -260,10 +252,7 @@ async def request_cv_save(
     job_repo: JobRepository = Depends(get_job_repo),
 ) -> dict:
     """
-    After a cv_parsing job completes, create a cv_save confirmation.
-    The parsed data lives in the job result and is only persisted after approval.
-
-    Ask: "Do you want me to save this candidate profile to the workspace?"
+    Create a cv_save confirmation after a cv_parsing job completes.
     """
     # Load parse job to get candidate name
     job_service = JobService(job_repo)

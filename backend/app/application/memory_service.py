@@ -86,17 +86,43 @@ class MemoryService:
             for r in repos:
                 langs = ", ".join(r.languages[:5]) if r.languages else "N/A"
                 desc = r.description[:100] if r.description else "No description"
-                parts.append(f"- **{r.repo_name}** ({r.repo_url}) — Languages: {langs} — {desc}")
+                parts.append(f"- **{r.repo_name}** ({r.repo_url}) — Languages: {langs}")
+                parts.append(f"  *Description:* {desc}")
+                
+                # Include File Structure summary
+                structure = r.structure or {}
+                files = structure.get("files", [])
+                dirs = structure.get("dirs", [])
+                if files or dirs:
+                    parts.append(f"  *Key Directories:* {', '.join(dirs[:10]) if dirs else 'root only'}")
+                    parts.append(f"  *Sample Files:* {', '.join(files[:15])}")
+                
                 if r.readme_content:
-                    parts.append(f"  README excerpt: {r.readme_content[:300]}...")
+                    parts.append(f"  *README excerpt:* {r.readme_content[:400].strip()}...")
+                
+                # Include actual code snippet content for deeper understanding
+                if r.code_snippets:
+                    parts.append(f"  *Code Snippets Analyzed ({len(r.code_snippets)} files):*")
+                    for snippet in r.code_snippets[:3]:  # show top 3 to keep context manageable
+                        path = snippet.get("path", "")
+                        content = snippet.get("content", "")[:500].strip()
+                        if content:
+                            parts.append(f"    [{path}]:\n    ```\n    {content}\n    ```")
 
-        # Include pending CV parse results from completed jobs
+        # Include active jobs and pending CV parse results
         if self._job_repo and session_id:
             try:
                 jobs = await self._job_repo.list_for_session(tenant_id, session_id)
+                active_jobs = [j for j in jobs if j.status.value in ("queued", "running")]
+                if active_jobs:
+                    parts.append("\n## Active Jobs (In Progress)")
+                    for j in active_jobs:
+                        parts.append(f"- **{j.tool_name.value}** — Status: {j.status.value}")
+
                 for job in jobs:
                     if job.tool_name.value == "cv_parsing" and job.status.value == "completed" and job.result:
                         result = job.result
+                        # ... (existing CV parsing logic)
                         if result.get("parsed_only"):
                             parts.append("\n## Parsed CV (Pending Save)")
                             parts.append(f"- **Name:** {result.get('full_name', 'N/A')}")
@@ -136,14 +162,22 @@ class MemoryService:
         # System prompt with workspace context
         workspace_ctx = await self.get_workspace_context(tenant_id, session_id)
         system_text = (
-            "You are TalentCopilot, an AI assistant for recruiting teams. "
-            "You help with candidate evaluation, repository analysis, and hiring decisions.\n"
-            "You have access to the following tools:\n"
-            "- github_ingestion: Ingest and analyse a public GitHub repository\n"
-            "- cv_parsing: Parse a CV/resume and extract structured profile data\n"
-            "IMPORTANT: Before using any tool, you MUST ask for user confirmation.\n"
-            "When the user asks about candidates, repositories, or skills, use the workspace "
-            "data below to give specific, data-driven answers.\n"
+            "You are TalentCopilot, a high-end AI recruitment assistant. Be professional and helpful.\n\n"
+            "## YOUR TOOLS\n"
+            "You have internal tools. To use them, you MUST write a special tag in your response.\n"
+            "- **github_ingestion**: Fetches and indexes a GitHub repo.\n"
+            "- **cv_parsing**: Parses a CV file.\n\n"
+            "## CRITICAL RULE: HOW TO INVOKE A TOOL\n"
+            "When you need to ingest a repository, your response MUST contain this exact syntax with no variations:\n"
+            "[TOOL_REQUEST]{\"tool\": \"github_ingestion\", \"payload\": {\"repo_url\": \"<THE_URL>\"}}[/TOOL_REQUEST]\n\n"
+            "For example, if the URL is https://github.com/user/repo, your response MUST contain:\n"
+            "[TOOL_REQUEST]{\"tool\": \"github_ingestion\", \"payload\": {\"repo_url\": \"https://github.com/user/repo\"}}[/TOOL_REQUEST]\n\n"
+            "## WORKFLOW\n"
+            "1. User shares a GitHub URL → Check workspace data below. If NOT already ingested, write a short announcement and include the [TOOL_REQUEST] tag.\n"
+            "2. If already ingested → Answer using the workspace data below. Do NOT re-invoke the tool.\n"
+            "3. Do NOT say 'I will analyze' or 'Please wait' without including the [TOOL_REQUEST] tag immediately in the same message.\n\n"
+            "## CURRENT WORKSPACE DATA\n"
+            "Use this data to answer questions about candidates and repositories with detail and structure.\n"
         )
         if workspace_ctx:
             system_text += f"\n--- Current Workspace Data ---\n{workspace_ctx}\n"

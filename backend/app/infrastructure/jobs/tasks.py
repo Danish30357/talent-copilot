@@ -1,15 +1,5 @@
 """
 Celery tasks for background tool execution.
-
-Each task:
-1. Updates job status to RUNNING
-2. Executes the tool
-3. Persists results to DB (only when explicitly approved)
-4. Updates job status to COMPLETED or FAILED
-
-CV HITL Flow (two-step):
-  Step 1 — cv_parsing job: parse file → store structured data in job result (NO persist)
-  Step 2 — cv_save job:    user approves → persist Candidate from job result
 """
 
 import asyncio

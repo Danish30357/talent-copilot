@@ -53,7 +53,7 @@ async def conversation_node(state: GraphStateDict) -> GraphStateDict:
 # ────────────────────────────────────────────────────────────
 
 _TOOL_PATTERN = re.compile(
-    r"\[TOOL_REQUEST\]\s*(\{.*?\})\s*\[/TOOL_REQUEST\]", re.DOTALL
+    r"\[TOOL_REQUEST\]\s*(?:```json)?\s*(\{.*?\})\s*(?:```)?\s*\[/TOOL_REQUEST\]", re.DOTALL
 )
 
 
