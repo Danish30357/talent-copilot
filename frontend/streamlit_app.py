@@ -219,13 +219,8 @@ def render_sidebar():
                 else:
                     job_just_completed = True
             st.session_state.active_jobs = still_active
-
-            # Auto-refresh: if jobs still running, poll every 3 seconds
-            if still_active:
-                time.sleep(3)
-                st.rerun()
-            # If a job just finished, rerun immediately to show the dialog
-            elif job_just_completed:
+            # Only rerun immediately when a job JUST finished (to show next dialog)
+            if job_just_completed and not still_active:
                 st.rerun()
         else:
             st.caption("No active jobs.")
@@ -237,37 +232,48 @@ def render_sidebar():
             st.rerun()
 
 
-@st.dialog("📄 CV Parsing Complete")
+@st.dialog("📄 Save Candidate to Workspace?")
 def show_parse_complete_save_prompt():
-    """Show save confirmation prompt after CV parse job completes."""
+    """Show save confirmation popup after CV parse job completes. Auto-triggers save confirmation."""
     parse_result = st.session_state.parse_job_completed
     st.success(f"✅ CV parsed: **{parse_result.get('full_name', 'Unknown')}**")
     st.markdown(f"**Skills:** {', '.join(parse_result.get('skills', [])[:5])}")
-    st.markdown(f"**Experience entries:** {len(parse_result.get('experience', []))}")
+    st.markdown(f"**Experience:** {len(parse_result.get('experience', []))} entries")
+    st.markdown("---")
+    st.markdown("Would you like to save this candidate profile to the workspace?")
 
-    if st.button("💾 Request Save to Workspace", use_container_width=True):
-        if not st.session_state.current_session_id:
-            st.warning("Open a chat session first.")
-        else:
-            resp = api_post(
-                "/upload/cv/save-confirmation",
-                params={
-                    "session_id": st.session_state.current_session_id,
-                    "parse_job_id": parse_result["parse_job_id"],
-                },
-            )
-            if resp and resp.status_code == 200:
-                data = resp.json()
-                st.session_state.pending_confirmation = {
-                    "id": data["confirmation_id"],
-                    "tool": "CV Save",
-                    "message": data["message"],
-                    "payload": data.get("candidate_preview", {}),
-                }
-                st.session_state.parse_job_completed = None
-                st.rerun()
-            elif resp:
-                st.error(resp.json().get("detail", "Error"))
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("💾 Yes, Save", type="primary", use_container_width=True):
+            if not st.session_state.current_session_id:
+                st.warning("Open a chat session first.")
+            else:
+                resp = api_post(
+                    "/upload/cv/save-confirmation",
+                    params={
+                        "session_id": st.session_state.current_session_id,
+                        "parse_job_id": parse_result["parse_job_id"],
+                    },
+                )
+                if resp and resp.status_code == 200:
+                    data = resp.json()
+                    # Directly approve the save — no extra popup needed
+                    confirm_resp = api_post(
+                        "/confirm",
+                        json_data={"confirmation_id": data["confirmation_id"], "approved": True},
+                    )
+                    if confirm_resp and confirm_resp.status_code == 200:
+                        cdata = confirm_resp.json()
+                        if cdata.get("job_id"):
+                            st.session_state.active_jobs.append(cdata["job_id"])
+                    st.session_state.parse_job_completed = None
+                    st.rerun()
+                elif resp:
+                    st.error(resp.json().get("detail", "Error"))
+    with col2:
+        if st.button("❌ No, Discard", type="secondary", use_container_width=True):
+            st.session_state.parse_job_completed = None
+            st.rerun()
 
 
 def _render_job_status(job_id: str) -> bool:
@@ -329,17 +335,11 @@ def _handle_confirmation_decision(confirmation_id: str, approved: bool):
     )
     if resp and resp.status_code == 200:
         data = resp.json()
-        if approved:
-            if data.get("job_id"):
-                st.session_state.active_jobs.append(data["job_id"])
-                st.success(f"✅ Approved! Background job dispatched: `{data['job_id']}`")
-            else:
-                st.success("✅ Approved! Operation executing...")
-        else:
-            st.warning("❌ Denied. Operation aborted.")
-        
+        if approved and data.get("job_id"):
+            st.session_state.active_jobs.append(data["job_id"])
         st.session_state.pending_confirmation = None
-        time.sleep(1) # Let the user see the success message briefly before rerun
+        # Close dialog immediately — toast will show on next render
+        st.session_state["_last_action"] = "approved" if approved else "denied"
         st.rerun()
     elif resp:
         st.error(resp.json().get("detail", "Error processing confirmation"))
@@ -575,7 +575,14 @@ def main():
     else:
         render_sidebar()
 
-        # Render any active modal dialogs first
+        # Show toast feedback after a confirmation dialog was actioned
+        last_action = st.session_state.pop("_last_action", None)
+        if last_action == "approved":
+            st.toast("✅ Approved! Processing in background...", icon="✅")
+        elif last_action == "denied":
+            st.toast("❌ Action denied.", icon="❌")
+
+        # Render any active modal dialogs
         if st.session_state.pending_confirmation:
             show_confirmation_modal()
         elif st.session_state.parse_job_completed:
@@ -588,6 +595,11 @@ def main():
 
         with workspace_tab:
             render_workspace()
+
+        # Auto-poll: sleep AFTER full page renders so popup closes on this render first
+        if st.session_state.active_jobs:
+            time.sleep(3)
+            st.rerun()
 
 
 if __name__ == "__main__":
