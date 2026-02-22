@@ -103,11 +103,31 @@ class MemoryService:
                 # Include actual code snippet content for deeper understanding
                 if r.code_snippets:
                     parts.append(f"  *Code Snippets Analyzed ({len(r.code_snippets)} files):*")
-                    for snippet in r.code_snippets[:3]:  # show top 3 to keep context manageable
+                    for snippet in r.code_snippets[:3]:
                         path = snippet.get("path", "")
                         content = snippet.get("content", "")[:500].strip()
                         if content:
                             parts.append(f"    [{path}]:\n    ```\n    {content}\n    ```")
+
+                # Extract quality signals heuristically from the file tree
+                all_files_lower = [f.lower() for f in files]
+                all_dirs_lower = [d.lower() for d in dirs]
+                signals = []
+                has_tests = any("test" in f or "spec" in f for f in all_files_lower) or \
+                            any("test" in d for d in all_dirs_lower)
+                has_ci = any(".github" in d or "ci" in d for d in all_dirs_lower) or \
+                          any("workflow" in f or ".travis" in f or "jenkins" in f for f in all_files_lower)
+                has_docker = any("dockerfile" in f for f in all_files_lower)
+                has_deps = any(f in all_files_lower for f in ["requirements.txt", "pyproject.toml", "package.json", "go.mod", "pom.xml"])
+                has_lint = any(f in all_files_lower for f in [".flake8", ".eslintrc", "pylintrc", ".pre-commit-config.yaml", "mypy.ini"])
+                has_docs = any("readme" in f or "docs" in d for f in all_files_lower for d in all_dirs_lower)
+                signals.append(f"Tests: {'✅ Yes' if has_tests else '❌ Not found'}")
+                signals.append(f"CI/CD: {'✅ Yes' if has_ci else '❌ Not found'}")
+                signals.append(f"Docker: {'✅ Yes' if has_docker else '❌ Not found'}")
+                signals.append(f"Dependency Management: {'✅ Yes' if has_deps else '❌ Not found'}")
+                signals.append(f"Linting/Code Quality Config: {'✅ Yes' if has_lint else '❌ Not found'}")
+                signals.append(f"Documentation: {'✅ Yes' if has_docs else '❌ Not found'}")
+                parts.append(f"  *Quality Signals:* {' | '.join(signals)}")
 
         # Include active jobs and pending CV parse results
         if self._job_repo and session_id:
@@ -162,22 +182,26 @@ class MemoryService:
         # System prompt with workspace context
         workspace_ctx = await self.get_workspace_context(tenant_id, session_id)
         system_text = (
-            "You are TalentCopilot, a high-end AI recruitment assistant. Be professional and helpful.\n\n"
+            "You are TalentCopilot, an AI assistant for recruiting teams. Be professional, specific, and data-driven.\n\n"
+            "## YOUR CAPABILITIES\n"
+            "You help recruiters with these tasks — always use the Workspace Data below to give specific answers:\n"
+            "1. **Repository Analysis** — Describe structure, tech stack, code quality signals, and architecture patterns\n"
+            "2. **Candidate Evaluation** — Summarise skills, experience, and suitability for specific roles\n"
+            "3. **Candidate vs Repo Matching** — Compare candidate skills against a repo's tech stack. Say explicitly: strong match / partial match / gap\n"
+            "4. **Interview Question Generation** — Generate tailored technical interview questions based on the repo's stack or candidate's background\n"
+            "5. **Evaluation Notes** — Write structured evaluation notes for a candidate relevant to a role or repo\n\n"
             "## YOUR TOOLS\n"
-            "You have internal tools. To use them, you MUST write a special tag in your response.\n"
-            "- **github_ingestion**: Fetches and indexes a GitHub repo.\n"
-            "- **cv_parsing**: Parses a CV file.\n\n"
-            "## CRITICAL RULE: HOW TO INVOKE A TOOL\n"
-            "When you need to ingest a repository, your response MUST contain this exact syntax with no variations:\n"
-            "[TOOL_REQUEST]{\"tool\": \"github_ingestion\", \"payload\": {\"repo_url\": \"<THE_URL>\"}}[/TOOL_REQUEST]\n\n"
-            "For example, if the URL is https://github.com/user/repo, your response MUST contain:\n"
-            "[TOOL_REQUEST]{\"tool\": \"github_ingestion\", \"payload\": {\"repo_url\": \"https://github.com/user/repo\"}}[/TOOL_REQUEST]\n\n"
-            "## WORKFLOW\n"
-            "1. User shares a GitHub URL → Check workspace data below. If NOT already ingested, write a short announcement and include the [TOOL_REQUEST] tag.\n"
-            "2. If already ingested → Answer using the workspace data below. Do NOT re-invoke the tool.\n"
-            "3. Do NOT say 'I will analyze' or 'Please wait' without including the [TOOL_REQUEST] tag immediately in the same message.\n\n"
-            "## CURRENT WORKSPACE DATA\n"
-            "Use this data to answer questions about candidates and repositories with detail and structure.\n"
+            "- **github_ingestion**: Fetches and indexes a GitHub repo — use when user shares a new URL\n"
+            "- **cv_parsing**: Parses a CV file — use when user uploads a resume\n\n"
+            "## TOOL INVOCATION (STRICT FORMAT)\n"
+            "[TOOL_REQUEST]{\"tool\": \"github_ingestion\", \"payload\": {\"repo_url\": \"<URL>\"}}[/TOOL_REQUEST]\n"
+            "Example: [TOOL_REQUEST]{\"tool\": \"github_ingestion\", \"payload\": {\"repo_url\": \"https://github.com/user/repo\"}}[/TOOL_REQUEST]\n\n"
+            "## RULES\n"
+            "1. GitHub URL given → check workspace below. If NEW → announce + include [TOOL_REQUEST] tag. If already ingested → answer from data.\n"
+            "2. Never say 'I will analyze' without including the [TOOL_REQUEST] tag in the same message.\n"
+            "3. When asked about quality signals, ALWAYS reference the Quality Signals section in workspace data.\n"
+            "4. When asked to compare a candidate to a repo, list matching skills, missing skills, and give an overall verdict.\n"
+            "5. When generating interview questions, make them specific to the actual tech stack found in the repo.\n\n"
         )
         if workspace_ctx:
             system_text += f"\n--- Current Workspace Data ---\n{workspace_ctx}\n"
