@@ -68,7 +68,7 @@ GITHUB_TOKEN=        # optional, leave blank for public repos
 ```env
 OPENAI_API_KEY=your_key_here
 JWT_SECRET_KEY=any_random_string
-GITHUB_TOKEN=
+GITHUB_TOKEN= for private repos
 ```
 
 **Step 2 — Start the stack**
