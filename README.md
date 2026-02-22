@@ -1,164 +1,126 @@
 # 🧠 TalentCopilot
 
-> An enterprise-grade, multi-tenant AI recruiting assistant — built from scratch with FastAPI, LangGraph, PostgreSQL, Celery, and Streamlit.
-
-I built this because I wanted to see what a *real* AI-powered recruiting tool looks like under the hood — not a demo wrapper over GPT that pretends to do things, but something where every feature actually works: the agent reasons through tool calls, humans stay in control of critical actions, background jobs run properly, and different companies can use the same platform without ever seeing each other's data.
-
-Here's what actually went into it.
+A multi-tenant AI recruiting assistant built for the technical assessment. It lets recruiters chat with an AI to analyse GitHub repositories, parse CVs, and ask questions about candidates — with a Human-in-the-Loop confirmation step before anything sensitive runs.
 
 ---
 
-## What It Does
+## What I Built
 
-At its core, TalentCopilot is a chat interface where a recruiter can:
+The system has three main capabilities:
 
-- **Drop in a GitHub repo URL** and have the AI analyse the codebase — languages used, project structure, what the code is actually doing — then answer questions about it
-- **Upload a CV** and get a structured breakdown of the candidate's skills, experience, and education
-- **Ask questions** like *"Is this candidate a good fit for a senior backend role?"* and get context-aware, data-driven answers — not generic ones
+**1. GitHub Repository Analysis**
+You can paste a GitHub URL into the chat and the AI will fetch the repo's file structure, languages, and README, then answer questions about what the codebase is doing.
 
-The important part is that none of this happens automatically. Every critical action goes through a **Human-in-the-Loop (HITL) confirmation** — a secure popup that the recruiter must explicitly approve before anything runs in the background. The AI proposes; the human decides.
+**2. CV Parsing**
+Upload a PDF or DOCX resume. The system extracts the candidate's name, email, skills, experience, and education into structured data that the AI can reason over.
+
+**3. Contextual Chat**
+After ingesting repos and CVs, you can ask the AI things like *"Is this candidate a good fit for a backend role?"* and it will answer using the actual workspace data, not generic responses.
 
 ---
 
-## The Architecture
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Streamlit Frontend                        │
-│   Chat UI · Confirmation Popups · CV Upload · Job Polling   │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ HTTP / JWT
-┌──────────────────────────▼──────────────────────────────────┐
-│                      FastAPI Backend                         │
-│                                                              │
-│  Presentation   →  Auth · Chat · Confirmations              │
-│  Application    →  ChatService · MemoryService               │
-│  Domain         →  Entities · Interfaces · Enums            │
-│  Infrastructure →  LangGraph · DB Repos · Celery · Tools    │
-└──────────┬───────────────────────────────────────────────────┘
-           │
-    ┌──────▼──────┐   ┌─────────────┐   ┌────────────────────┐
-    │  PostgreSQL  │   │ Redis Broker│   │  Celery Workers    │
-    │  (row-level  │   │             │   │  GitHub Ingestion  │
-    │  tenancy)    │   │             │   │  CV Parsing        │
-    └──────────────┘   └─────────────┘   └────────────────────┘
+Streamlit Frontend
+      │  HTTP + JWT
+FastAPI Backend
+  ├── LangGraph Agent (state machine)
+  ├── PostgreSQL (row-level tenant isolation)
+  ├── Celery + Redis (background jobs)
+  └── Tools: GitHub Ingestion · CV Parser
 ```
 
-The LangGraph state machine is what makes the agent behaviour reliable. It doesn't just fire off tool calls based on what the model decides to say — it has explicit states: `conversation → tool_decision → confirmation_pending → (user approves) → tool_execution → response`. The graph literally stops and waits for a human.
+The LangGraph agent works as a simple state machine:
+
+```
+User message
+  → conversation_node
+  → tool_decision_node   (did the AI request a tool?)
+  → confirmation_pending (yes → wait for human approval)
+  → tool_execution       (approved → run Celery task)
+  → response_generation
+```
+
+This means the AI cannot trigger any tool on its own. A human always confirms first.
+
+---
+
+## Multi-Tenancy
+
+Every database table has a `tenant_id` column. Every query filters by it. Tenant A's candidates, repositories, and sessions are never accessible to Tenant B — enforced at the repository layer.
 
 ---
 
 ## Getting Started
 
-### What You'll Need
+**Prerequisites:** Docker, Docker Compose, an OpenAI API key.
 
-- Docker & Docker Compose
-- An OpenAI API key (or any OpenAI-compatible endpoint)
-
-### Setup
-
-**1. Configure your environment**
-
-Create two `.env` files:
+**Step 1 — Set up your `.env` files**
 
 `talent_copilot/.env`
 ```env
 OPENAI_API_KEY=your_key_here
-GITHUB_TOKEN=        # Optional — leave blank for public repos
+GITHUB_TOKEN=        # optional, leave blank for public repos
 ```
 
 `talent_copilot/backend/.env`
 ```env
 OPENAI_API_KEY=your_key_here
-JWT_SECRET_KEY=any_long_random_string
-GITHUB_TOKEN=        # Optional
+JWT_SECRET_KEY=any_random_string
+GITHUB_TOKEN=
 ```
 
-**2. Spin everything up**
-
+**Step 2 — Start the stack**
 ```bash
 docker compose up -d --build
 ```
 
-This starts the frontend, API, Celery workers, Redis, and Postgres. Everything is containerised — no local installs needed.
-
-**3. Create a test account**
-
+**Step 3 — Seed the database**
 ```bash
 docker compose exec api python seed.py
 ```
 
-This seeds two tenants so you can test multi-tenant isolation:
+This creates two tenants for testing isolation:
 
 | Tenant | Email | Password |
 |---|---|---|
 | acme-corp | `recruiter@acme.com` | `password123` |
 | other-corp | `other@techcorp.com` | `password123` |
 
-**4. Open the app**
+**Step 4 — Open the app**
 
-| Service | URL |
-|---|---|
-| Frontend | http://localhost:8501 |
-| API Docs | http://localhost:8000/docs |
-| Celery Monitor | http://localhost:5555 |
+- Frontend: http://localhost:8501
+- API Docs: http://localhost:8000/docs
+- Celery Monitor: http://localhost:5555
 
 ---
 
-## The HITL Flow
+## API Endpoints
 
-This was probably the trickiest bit to get right. Here's how it works end-to-end:
-
-1. User says "analyse this repo: `https://github.com/...`"
-2. LangGraph agent detects a tool call and emits a `[TOOL_REQUEST]` tag
-3. The backend intercepts it, creates a `Confirmation` record with a **SHA-256 hash** of the full request (tenant, user, session, tool, payload)
-4. Frontend shows a dialog — *"Do you want me to ingest this repository?"*
-5. User clicks Yes → the backend verifies the hash and dispatches a Celery task
-6. Job runs in the background; frontend polls for completion
-7. When done, the AI's next response has the full repo data in its context
-
-If the user clicks No, the confirmation is marked `DENIED` permanently. The AI can't retry it.
-
----
-
-## Security
-
-| Concern | How It's Handled |
-|---|---|
-| Cross-tenant data leakage | Every single DB query filters by `tenant_id`. It's enforced at the repository layer, not ad-hoc in routes. |
-| Confirmation replay attacks | Cryptographic hash ties the approval to the exact payload. Changing anything — even one character of the URL — invalidates it. |
-| Unauthorised tool execution | Tools only run if a matching `APPROVED` confirmation exists in the database. No approval, no execution. |
-| Token forgery | JWT signed with HS256; `tenant_id` embedded in the payload and verified on every request. |
-| Bad file uploads | Whitelist of extensions (PDF, DOCX) + size cap before anything is processed. |
-
----
-
-## API Reference
-
-| Method | Endpoint | What it does |
+| Method | Path | Description |
 |---|---|---|
-| POST | `/auth/login` | Login and get a JWT |
-| POST | `/auth/refresh` | Refresh an expired token |
-| POST | `/chat` | Send a message, get an AI response |
-| GET | `/chat/sessions` | List your conversation sessions |
-| GET | `/jobs/{id}/status` | Check if a background job is done |
-| GET | `/workspace/candidates` | List saved candidate profiles |
-| GET | `/workspace/repositories` | List ingested repositories |
-| POST | `/upload/cv` | Upload a CV file |
-| POST | `/ingest/github` | Request a repo to be ingested |
-| POST | `/confirm` | Approve or deny a pending tool action |
-| GET | `/health` | API health check |
+| POST | `/auth/login` | Login, returns JWT |
+| POST | `/auth/refresh` | Refresh token |
+| POST | `/chat` | Send message, get AI response |
+| GET | `/chat/sessions` | List sessions |
+| GET | `/jobs/{id}/status` | Poll background job |
+| GET | `/workspace/candidates` | List saved candidates |
+| GET | `/workspace/repositories` | List ingested repos |
+| POST | `/upload/cv` | Upload CV file |
+| POST | `/ingest/github` | Request repo ingestion |
+| POST | `/confirm` | Approve or deny a tool action |
+| GET | `/health` | Health check |
 
 ---
 
-## Why These Tech Choices
+## Design Notes
 
-- **FastAPI** — async-first, great for an event-driven system where most operations are I/O bound
-- **LangGraph** — gives the agent a proper state machine instead of hoping the LLM decides to do the right thing every time
-- **Celery + Redis** — GitHub ingestion and CV parsing can take 10-30 seconds. Running them in background workers means the chat API stays fast
-- **PostgreSQL** — relational data with strong consistency is the right call for multi-tenant systems where isolation matters
-- **Streamlit** — fast to build, good enough for an internal recruiting tool UI
+- **Why LangGraph?** A plain LLM call doesn't give you control over when tools run. Using a state machine means tool execution is deterministic — it only happens after explicit human approval, every time.
+- **Why Celery?** GitHub fetching and CV parsing can take 10–30 seconds. Running them as background workers means the chat API stays responsive.
+- **Confirmation hashing:** Each confirmation is tied to a SHA-256 hash of the exact request (tenant, user, session, tool, payload). If anything changes, the confirmation is invalid. This prevents replay attacks.
+- **Memory:** Each LLM call gets recent messages + a session summary + the full workspace snapshot (candidates, repos, active jobs). This keeps responses grounded in real data.
 
 ---
 
-*Built as a full-stack agentic AI system demonstrating HITL workflows, multi-tenancy, and LangGraph-based agent architecture.*
+*Submitted as part of the technical assessment.*
